@@ -1,13 +1,14 @@
 import os
 import requests
+import yt_dlp
 from flask import Flask, request
 
 app = Flask(__name__)
 
 # ---------------- CONFIG ----------------
-BOT_TOKEN = "7657125691:AAFm8yyWeB8Y-R12eHVhp-r6Kgr6Qs7g8nY"   # apna bot token
-FORCE_CHANNEL = "@freeultraapk"   # yaha apna channel username daalna
-WEBHOOK_URL = "https://instaytbot-3.onrender.com/webhook"  # Render ka URL + /webhook
+BOT_TOKEN = "7657125691:AAFm8yyWeB8Y-R12eHVhp-r6Kgr6Qs7g8nY"
+FORCE_CHANNEL = "@freeultraapk"
+WEBHOOK_URL = "https://instaytbot-3.onrender.com/webhook"
 
 # Telegram API Base
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
@@ -25,13 +26,16 @@ def is_subscribed(user_id):
 # --------- DOWNLOAD FUNCTION ----------
 def download_video(link):
     try:
-        # Free public API (no login required)
-        api = "https://save-from.net/api/convert"
-        res = requests.post(api, json={"url": link}).json()
-        if "url" in res:
-            return res["url"]
-        return None
-    except:
+        ydl_opts = {
+            "format": "mp4",
+            "outtmpl": "video.%(ext)s"
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(link, download=True)
+            filename = ydl.prepare_filename(info)
+            return filename
+    except Exception as e:
+        print("Download error:", e)
         return None
 
 # --------- HANDLE UPDATES ----------
@@ -42,7 +46,6 @@ def handle_update(data):
     msg = data["message"]
     chat_id = msg["chat"]["id"]
 
-    # Agar text nahi bheja
     if "text" not in msg:
         requests.post(f"{API_URL}/sendMessage", json={
             "chat_id": chat_id,
@@ -52,50 +55,50 @@ def handle_update(data):
 
     text = msg["text"]
 
-    # Start command
+    # /start command
     if text == "/start":
         if not is_subscribed(chat_id):
             requests.post(f"{API_URL}/sendMessage", json={
                 "chat_id": chat_id,
-                "text": f"👉 Bot use karne ke liye pehle channel join karo: {FORCE_CHANNEL}"
+                "text": f"👉 Pehle channel join karo: {FORCE_CHANNEL}"
             })
-            return
         else:
             requests.post(f"{API_URL}/sendMessage", json={
                 "chat_id": chat_id,
-                "text": "Send me any Instagram/YouTube link and I’ll download it for you 🚀"
+                "text": "👋 Mujhe YouTube/Instagram link bhejo, mai video bhej dunga 🚀"
             })
-            return
+        return
 
     # Force Join Check
     if not is_subscribed(chat_id):
         requests.post(f"{API_URL}/sendMessage", json={
             "chat_id": chat_id,
-            "text": f"👉 Bot use karne ke liye pehle channel join karo: {FORCE_CHANNEL}"
+            "text": f"👉 Pehle channel join karo: {FORCE_CHANNEL}"
         })
         return
 
-    # Agar user ne koi link bheja
+    # Agar user ne link bheja
     if "http" in text:
         requests.post(f"{API_URL}/sendMessage", json={
             "chat_id": chat_id,
-            "text": "⏳ Downloading your video, please wait..."
+            "text": "⏳ Download ho raha hai..."
         })
 
-        video_url = download_video(text)
+        file_path = download_video(text)
 
-        if video_url:
-            requests.post(f"{API_URL}/sendVideo", json={
-                "chat_id": chat_id,
-                "video": video_url,
-                "caption": "✅ Here is your downloaded video!"
-            })
+        if file_path and os.path.exists(file_path):
+            with open(file_path, "rb") as f:
+                requests.post(
+                    f"{API_URL}/sendVideo",
+                    data={"chat_id": chat_id},
+                    files={"video": f},
+                )
+            os.remove(file_path)
         else:
             requests.post(f"{API_URL}/sendMessage", json={
                 "chat_id": chat_id,
-                "text": "❌ Failed to download. Link galat ho sakta hai."
+                "text": "❌ Video download fail ho gaya."
             })
-
 
 # --------- FLASK ROUTES ----------
 @app.route('/webhook', methods=["POST"])
@@ -110,7 +113,6 @@ def home():
 
 # --------- MAIN SETUP ----------
 if __name__ == "__main__":
-    # Webhook set karega
     set_hook = f"{API_URL}/setWebhook?url={WEBHOOK_URL}"
     requests.get(set_hook)
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
