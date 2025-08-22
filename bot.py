@@ -1,55 +1,116 @@
-import telebot
-from flask import Flask, request
-import yt_dlp
 import os
+import requests
+from flask import Flask, request
 
-TOKEN = os.getenv("BOT_TOKEN")  # Render pe environment variable me daalo
-bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# Home route
-@app.route('/')
-def home():
-    return "Bot is running!", 200
+# ---------------- CONFIG ----------------
+BOT_TOKEN = "7657125691:AAFm8yyWeB8Y-R12eHVhp-r6Kgr6Qs7g8nY"   # apna bot token
+FORCE_CHANNEL = "@freeultraapk"   # yaha apna channel username daalna
+WEBHOOK_URL = "https://instaytbot-3.onrender.com/webhook"  # Render ka URL + /webhook
 
-# Telegram webhook listener
-@app.route(f"/{TOKEN}", methods=['POST'])
-def getMessage():
-    json_str = request.get_data().decode('UTF-8')
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
-    return "!", 200
+# Telegram API Base
+API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# Start command
-@bot.message_handler(commands=['start'])
-def start(message):
-    bot.reply_to(message, "👋 Send me an Instagram video link and I'll try to download it.")
+# --------- FORCE JOIN CHECK ----------
+def is_subscribed(user_id):
+    url = f"{API_URL}/getChatMember?chat_id={FORCE_CHANNEL}&user_id={user_id}"
+    r = requests.get(url).json()
+    try:
+        status = r["result"]["status"]
+        return status in ["member", "administrator", "creator"]
+    except:
+        return False
 
-# Handle links
-@bot.message_handler(func=lambda m: True)
-def handle_message(message):
-    url = message.text.strip()
+# --------- DOWNLOAD FUNCTION ----------
+def download_video(link):
+    try:
+        # Free public API (no login required)
+        api = "https://save-from.net/api/convert"
+        res = requests.post(api, json={"url": link}).json()
+        if "url" in res:
+            return res["url"]
+        return None
+    except:
+        return None
 
-    if "instagram.com" not in url:
-        bot.reply_to(message, "⚠️ Please send a valid Instagram link.")
+# --------- HANDLE UPDATES ----------
+def handle_update(data):
+    if "message" not in data:
         return
 
-    try:
-        ydl_opts = {
-            "outtmpl": "video.mp4",
-            "format": "best",
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+    msg = data["message"]
+    chat_id = msg["chat"]["id"]
 
-        with open("video.mp4", "rb") as f:
-            bot.send_video(message.chat.id, f)
+    # Agar text nahi bheja
+    if "text" not in msg:
+        requests.post(f"{API_URL}/sendMessage", json={
+            "chat_id": chat_id,
+            "text": "Sirf video link bhejo!"
+        })
+        return
 
-        os.remove("video.mp4")
+    text = msg["text"]
 
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}")
+    # Start command
+    if text == "/start":
+        if not is_subscribed(chat_id):
+            requests.post(f"{API_URL}/sendMessage", json={
+                "chat_id": chat_id,
+                "text": f"👉 Bot use karne ke liye pehle channel join karo: {FORCE_CHANNEL}"
+            })
+            return
+        else:
+            requests.post(f"{API_URL}/sendMessage", json={
+                "chat_id": chat_id,
+                "text": "Send me any Instagram/YouTube link and I’ll download it for you 🚀"
+            })
+            return
 
-# Run Flask
+    # Force Join Check
+    if not is_subscribed(chat_id):
+        requests.post(f"{API_URL}/sendMessage", json={
+            "chat_id": chat_id,
+            "text": f"👉 Bot use karne ke liye pehle channel join karo: {FORCE_CHANNEL}"
+        })
+        return
+
+    # Agar user ne koi link bheja
+    if "http" in text:
+        requests.post(f"{API_URL}/sendMessage", json={
+            "chat_id": chat_id,
+            "text": "⏳ Downloading your video, please wait..."
+        })
+
+        video_url = download_video(text)
+
+        if video_url:
+            requests.post(f"{API_URL}/sendVideo", json={
+                "chat_id": chat_id,
+                "video": video_url,
+                "caption": "✅ Here is your downloaded video!"
+            })
+        else:
+            requests.post(f"{API_URL}/sendMessage", json={
+                "chat_id": chat_id,
+                "text": "❌ Failed to download. Link galat ho sakta hai."
+            })
+
+
+# --------- FLASK ROUTES ----------
+@app.route('/webhook', methods=["POST"])
+def webhook():
+    data = request.get_json()
+    handle_update(data)
+    return {"ok": True}
+
+@app.route('/')
+def home():
+    return "Bot is running ✅"
+
+# --------- MAIN SETUP ----------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    # Webhook set karega
+    set_hook = f"{API_URL}/setWebhook?url={WEBHOOK_URL}"
+    requests.get(set_hook)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
