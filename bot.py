@@ -116,3 +116,4 @@ if __name__ == "__main__":
     set_hook = f"{API_URL}/setWebhook?url={WEBHOOK_URL}"
     requests.get(set_hook)
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    
